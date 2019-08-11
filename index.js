@@ -6,6 +6,7 @@ var inherits = require('inherits')
 var duplexify = require('duplexify')
 
 var SIGNAL_FLUSH = new Buffer([0])
+var MAX_ID = Number.MAX_SAFE_INTEGER;
 
 var empty = new Buffer(0)
 var pool = new Buffer(10 * 1024)
@@ -135,8 +136,10 @@ var Multiplex = function (opts, onchannel) {
   this._corked = 0
   this._options = opts
   this._binaryName = !!opts.binaryName
-  this._local = []
-  this._remote = []
+  this._local = {}
+  this._remote = {}
+  this._localId = -1;
+  this._remoteId = -1;
   this._list = this._local
   this._receiving = null
   this._chunked = false
@@ -159,8 +162,8 @@ inherits(Multiplex, stream.Duplex)
 
 Multiplex.prototype.createStream = function (name, opts) {
   if (this.destroyed) throw new Error('Multiplexer is destroyed')
-  var id = this._local.indexOf(null)
-  if (id === -1) id = this._local.push(null) - 1
+  this._localId = this._localId === MAX_ID ? 0 : this._localId + 1;
+  var id = this._localId
   var channel = new Channel(this._name(name || id.toString()), this, xtend(this._options, opts))
   return this._addChannel(channel, id, this._local)
 }
@@ -209,7 +212,7 @@ Multiplex.prototype._addChannel = function (channel, id, list) {
   while (list.length <= id) list.push(null)
   list[id] = channel
   channel.on('finalize', function () {
-    list[id] = null
+    delete list[id]
   })
 
   channel.open(id, list === this._local)
@@ -389,14 +392,14 @@ Multiplex.prototype._clear = function () {
   if (this._finished) return
   this._finished = true
 
-  var list = this._local.concat(this._remote)
+  var list = Object.assign({}, this._local, this._remote);
 
-  this._local = []
-  this._remote = []
+  this._local = {}
+  this._remote = {}
 
-  list.forEach(function (stream) {
+  for (let [id, stream] of Object.entries(list)) {
     if (stream) stream._destroy(null, false)
-  })
+  }
 
   this.push(null)
 }
